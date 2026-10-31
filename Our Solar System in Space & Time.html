@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Our Solar System in Space &amp; Time</title>
+<style>
+:root{color-scheme:dark;--bg:#04050c;--fg:#e8ecf8;--mut:#8b93b0;--panel:rgba(14,18,34,.74);--line:rgba(255,255,255,.14);--acc:#ffc857}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+canvas{display:block;position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
+.p{position:fixed;background:var(--panel);border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+#info{left:12px;top:calc(env(safe-area-inset-top,0px) + 12px);max-width:340px;padding:12px 14px}
+h1{font-size:16px;margin:0 0 6px;color:var(--acc)}
+#desc{margin:0 0 8px;color:var(--mut);font-size:13px}
+#stats div{display:flex;justify-content:space-between;gap:14px;font-size:13px;border-top:1px solid var(--line);padding:4px 0}
+#stats b{color:var(--fg);font-variant-numeric:tabular-nums}
+#bar{left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 12px);padding:8px 10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:center;width:max-content;max-width:calc(100% - 24px);box-sizing:border-box}
+button{background:transparent;color:var(--fg);border:1px solid var(--line);border-radius:9px;padding:6px 11px;font:inherit;cursor:pointer}
+button.on{background:var(--acc);color:#1a1300;border-color:var(--acc)}
+label{display:flex;align-items:center;gap:8px;color:var(--mut);font-size:13px}
+input[type=range]{width:130px;accent-color:var(--acc)}
+#spdv{min-width:92px;color:var(--fg);font-variant-numeric:tabular-nums}
+#hint{right:12px;top:calc(env(safe-area-inset-top,0px) + 12px);padding:6px 10px;font-size:12px;color:var(--mut)}
+@media(max-width:640px){#hint{display:none}#info{max-width:calc(100% - 24px)}#desc{display:none}}
+</style></head><body>
+<div id="info" class="p"><h1>Our Solar System in Space &amp; Time</h1><p id="desc"></p><div id="stats"></div></div>
+<div id="hint" class="p">Drag to orbit · scroll / pinch to zoom</div>
+<div id="bar" class="p">
+<button data-m="A" class="on">Local · corkscrew</button><button data-m="B">Galactic · orbit</button>
+<button id="play">Pause</button>
+<label>Speed <input id="spd" type="range" min="0" max="100" value="49"><span id="spdv"></span></label>
+<button id="reset">Reset</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=s=>document.querySelector(s), TAU=Math.PI*2;
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const cv=renderer.domElement;document.body.prepend(cv);
+const scene=new THREE.Scene(), cam=new THREE.PerspectiveCamera(50,1,.1,6000);
+function resize(){renderer.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}
+addEventListener('resize',resize);resize();
+
+/* ---------- helpers ---------- */
+function glowTex(){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d'),r=g.createRadialGradient(64,64,0,64,64,64);
+ r.addColorStop(0,'rgba(255,255,255,1)');r.addColorStop(.25,'rgba(255,255,255,.55)');r.addColorStop(1,'rgba(255,255,255,0)');g.fillStyle=r;g.fillRect(0,0,128,128);return new THREE.CanvasTexture(c)}
+const GT=glowTex();
+function glow(color,size){const s=new THREE.Sprite(new THREE.SpriteMaterial({map:GT,color,blending:THREE.AdditiveBlending,depthWrite:false,transparent:true}));s.scale.set(size,size,1);return s}
+function makeTrail(n,color){const pos=new Float32Array(n*3),col=new Float32Array(n*3),c=new THREE.Color(color);
+ for(let i=0;i<n;i++){const f=Math.pow(i/(n-1),1.5);col[i*3]=c.r*f;col[i*3+1]=c.g*f;col[i*3+2]=c.b*f}
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('color',new THREE.BufferAttribute(col,3));
+ const l=new THREE.Line(g,new THREE.LineBasicMaterial({vertexColors:true,blending:THREE.AdditiveBlending,transparent:true,depthWrite:false}));l.frustumCulled=false;
+ return{line:l,pos,n,filled:false}}
+function push(t,v){const p=t.pos,k=(t.n-1)*3;p.copyWithin(0,3);p[k]=v.x;p[k+1]=v.y;p[k+2]=v.z;
+ if(!t.filled){t.filled=true;for(let i=0;i<t.n-1;i++){p[i*3]=v.x;p[i*3+1]=v.y;p[i*3+2]=v.z}}
+ t.line.geometry.attributes.position.needsUpdate=true}
+const g3=()=>(Math.random()+Math.random()+Math.random()-1.5)*2;
+
+/* far background stars */
+{const n=1500,a=new Float32Array(n*3);for(let i=0;i<n;i++){const u=Math.random()*2-1,th=Math.random()*TAU,s=Math.sqrt(1-u*u);a[i*3]=2800*s*Math.cos(th);a[i*3+1]=2800*u;a[i*3+2]=2800*s*Math.sin(th)}
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(a,3));
+ scene.add(new THREE.Points(g,new THREE.PointsMaterial({size:1.4,sizeAttenuation:false,color:0x8896c8,transparent:true,opacity:.7})))}
+
+/* ---------- Scene A : local corkscrew ---------- */
+const A=new THREE.Group();scene.add(A);
+const vS=.08, tilt=-53*Math.PI/180, zAx=new THREE.Vector3(0,0,1);
+A.add(glow(0xffb340,18));
+A.add(new THREE.Mesh(new THREE.SphereGeometry(2.2,32,16),new THREE.MeshBasicMaterial({color:0xffd27a})));
+const planets=[['Mercury',.387,87.97,0xb5b5b5,.55],['Venus',.723,224.7,0xe8c48a,.9],['Earth',1,365.25,0x4da3ff,1],['Mars',1.524,687,0xe0603a,.75],['Jupiter',5.2,4332.6,0xd9a46a,1.9],['Saturn',9.58,10759,0xe6d29a,1.6]].map(([n,a,T,c,s],i)=>{
+ const R=6*Math.pow(a,.55),m=new THREE.Mesh(new THREE.SphereGeometry(s*.8,20,12),new THREE.MeshBasicMaterial({color:c}));A.add(m);
+ const ring=[];for(let k=0;k<128;k++){const q=k/128*TAU;ring.push(new THREE.Vector3(R*Math.cos(q),0,R*Math.sin(q)).applyAxisAngle(zAx,tilt))}
+ A.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(ring),new THREE.LineBasicMaterial({color:0x2a3350,transparent:true,opacity:.7})));
+ const tr=makeTrail(2400,c);A.add(tr.line);return{n,R,T,ph:i*1.7,m,tr}});
+{const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(new Float32Array([-150,0,0,0,0,0]),3));
+ g.setAttribute('color',new THREE.BufferAttribute(new Float32Array([0,0,0,1,.78,.34]),3));
+ A.add(new THREE.Line(g,new THREE.LineBasicMaterial({vertexColors:true})))}
+A.add(new THREE.ArrowHelper(new THREE.Vector3(1,0,0),new THREE.Vector3(28,0,0),32,0xffc857,6,3.5));
+const dustN=700,dust=new Float32Array(dustN*3);for(let i=0;i<dustN;i++){dust[i*3]=Math.random()*300-150;dust[i*3+1]=Math.random()*220-110;dust[i*3+2]=Math.random()*220-110}
+const dustG=new THREE.BufferGeometry();dustG.setAttribute('position',new THREE.BufferAttribute(dust,3));
+A.add(new THREE.Points(dustG,new THREE.PointsMaterial({size:1.6,sizeAttenuation:false,color:0x9fb4ff,transparent:true,opacity:.55})));
+const tmp=new THREE.Vector3();
+function posA(p,t,o){const a=TAU*t/p.T+p.ph;return o.set(p.R*Math.cos(a),0,p.R*Math.sin(a)).applyAxisAngle(zAx,tilt)}
+
+/* ---------- Scene B : galactic orbit ---------- */
+const B=new THREE.Group();B.visible=false;scene.add(B);
+const gal=new THREE.Group();B.add(gal);
+{const N=9000,pos=new Float32Array(N*3),col=new Float32Array(N*3),c1=new THREE.Color(1,.8,.6),c2=new THREE.Color(.6,.75,1),c=new THREE.Color();
+ for(let i=0;i<N;i++){let x,y,z,b=.5+Math.random()*.5,u=Math.random();
+  if(u<.15){x=g3()*9;y=g3()*5;z=g3()*9;c.copy(c1)}
+  else if(u<.85){const arm=i%4,r=14+Math.pow(Math.random(),.9)*136,th=arm*Math.PI/2+Math.log(r/10)*2.2+g3()*.22;x=r*Math.cos(th);z=r*Math.sin(th);y=g3()*2.2;c.copy(c1).lerp(c2,(r-14)/136)}
+  else{const r=Math.pow(Math.random(),.7)*150,th=Math.random()*TAU;x=r*Math.cos(th);z=r*Math.sin(th);y=g3()*2;c.copy(c1).lerp(c2,r/150);b=.35}
+  pos.set([x,y,z],i*3);col.set([c.r*b,c.g*b,c.b*b],i*3)}
+ const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('color',new THREE.BufferAttribute(col,3));
+ gal.add(new THREE.Points(g,new THREE.PointsMaterial({size:2.4,map:GT,vertexColors:true,blending:THREE.AdditiveBlending,transparent:true,depthWrite:false})))}
+gal.add(glow(0xffcf8a,70));
+const orbR=82;
+{const pts=[];for(let k=0;k<180;k++){const q=k/180*TAU;pts.push(new THREE.Vector3(orbR*Math.cos(q),0,-orbR*Math.sin(q)))}
+ B.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:0x34406a,transparent:true,opacity:.6})))}
+const sunB=new THREE.Group();sunB.add(glow(0xffb340,22));sunB.add(new THREE.Mesh(new THREE.SphereGeometry(1.8,16,12),new THREE.MeshBasicMaterial({color:0xffe08a})));B.add(sunB);
+const trB=makeTrail(3000,0xffc857);B.add(trB.line);
+const sunPos=(t,o)=>o.set(orbR*Math.cos(TAU*t/230),7*Math.sin(TAU*t/64+.6),-orbR*Math.sin(TAU*t/230));
+
+/* ---------- state / camera ---------- */
+const view={A:{th:.9,ph:1.15,d:95},B:{th:.6,ph:1.1,d:340}};
+let mode='A',t={A:0,B:0},acc={A:0,B:0},paused=false,sv={A:49,B:52};
+const range={A:[5,800,'days/s'],B:[.5,60,'Myr/s']};
+const speed=()=>{const[a,b]=range[mode];return a*Math.pow(b/a,sv[mode]/100)};
+function placeCam(){const v=view[mode];v.d=Math.min(mode==='A'?400:900,Math.max(mode==='A'?20:60,v.d));
+ cam.position.set(v.d*Math.sin(v.ph)*Math.cos(v.th),v.d*Math.cos(v.ph),v.d*Math.sin(v.ph)*Math.sin(v.th));cam.lookAt(0,0,0)}
+const ptrs=new Map();
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,[e.clientX,e.clientY])});
+cv.addEventListener('pointermove',e=>{if(!ptrs.has(e.pointerId))return;const p=ptrs.get(e.pointerId),v=view[mode];
+ if(ptrs.size===1){v.th-=(e.clientX-p[0])*.006;v.ph=Math.min(3.0,Math.max(.15,v.ph-(e.clientY-p[1])*.006))}
+ else{const o=[...ptrs.entries()].find(([k])=>k!==e.pointerId)[1];v.d*=Math.hypot(p[0]-o[0],p[1]-o[1])/Math.max(1,Math.hypot(e.clientX-o[0],e.clientY-o[1]))}
+ ptrs.set(e.pointerId,[e.clientX,e.clientY])});
+['pointerup','pointercancel'].forEach(n=>cv.addEventListener(n,e=>ptrs.delete(e.pointerId)));
+cv.addEventListener('wheel',e=>{e.preventDefault();view[mode].d*=Math.exp(e.deltaY*.001)},{passive:false});
+
+/* ---------- simulation steps ---------- */
+function stepA(dd){t.A+=dd;const dx=vS*dd,a=dustG.attributes.position.array;
+ for(let i=0;i<dustN;i++){a[i*3]-=dx;if(a[i*3]<-150)a[i*3]+=300}dustG.attributes.position.needsUpdate=true;
+ acc.A+=dd;let n=0;
+ while(acc.A>=1&&n++<60){acc.A-=1;const ts=t.A-acc.A;
+  for(const p of planets){const q=p.tr.pos;for(let i=0;i<p.tr.n;i++)q[i*3]-=vS;push(p.tr,posA(p,ts,tmp))}}
+ if(acc.A>=1)acc.A=0}
+function stepB(dd){t.B+=dd;gal.rotation.y=TAU*.7/230*t.B;acc.B+=dd;let n=0;
+ while(acc.B>=.1&&n++<80){acc.B-=.1;push(trB,sunPos(t.B-acc.B,tmp))}if(acc.B>=.1)acc.B=0}
+function meshes(){for(const p of planets)p.m.position.copy(posA(p,t.A,tmp));sunPos(t.B,sunB.position)}
+
+/* ---------- UI ---------- */
+const D={A:`The Sun isn’t standing still: it races around the Milky Way at about 220 km/s (≈ 46 AU every year) and drags every planet with it. Seen from outside, planets trace corkscrews, not closed ellipses. The arrow marks the direction of travel; the yellow line is the Sun’s straight path. Orbits compressed, Sun’s speed exaggerated.`,
+B:`Zoom out: the Sun circles the galactic centre once every ~230 million years (a “galactic year”), bobbing up and down through the disc roughly every 32 million years. Faint ring = Sun’s orbit. Galaxy is schematic and the vertical bob is exaggerated.`};
+function ui(){$('#desc').textContent=D[mode];$('#spd').value=sv[mode];$('#spdv').textContent=fmtS();
+ document.querySelectorAll('[data-m]').forEach(b=>b.classList.toggle('on',b.dataset.m===mode));A.visible=mode==='A';B.visible=mode==='B'}
+const fmtS=()=>{const s=speed();return(s<10?s.toFixed(1):Math.round(s))+' '+range[mode][2]};
+function stats(){const T=t[mode];
+ $('#stats').innerHTML=mode==='A'?
+ `<div>Elapsed<b>${(T/365.25).toFixed(2)} Earth years</b></div><div>Sun’s travel through the galaxy<b>${Math.round(T/365.25*46.4).toLocaleString()} AU</b></div><div>Earth’s own orbit radius<b>1 AU</b></div>`:
+ `<div>Elapsed<b>${T.toFixed(0)} million years</b></div><div>Galactic year completed<b>${(T/230*100).toFixed(0)} %</b></div><div>Distance travelled<b>≈ ${Math.round(T*734).toLocaleString()} light-years</b></div><div>Disc-plane crossings<b>${Math.max(0,Math.floor((T+6.11)/32))}</b></div>`}
+document.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{mode=b.dataset.m;ui();stats()});
+$('#play').onclick=e=>{paused=!paused;e.target.textContent=paused?'Play':'Pause'};
+$('#spd').oninput=e=>{sv[mode]=+e.target.value;$('#spdv').textContent=fmtS()};
+$('#reset').onclick=()=>{t={A:0,B:0};acc={A:0,B:0};planets.forEach(p=>p.tr.filled=false);trB.filled=false;stats()};
+
+/* ---------- loop ---------- */
+let last=performance.now(),f=0;
+function loop(now){requestAnimationFrame(loop);const dt=Math.min((now-last)/1000,.05);last=now;
+ if(!paused){const s=speed()*dt;mode==='A'?stepA(s):stepB(s)}
+ meshes();placeCam();renderer.render(scene,cam);if(++f%6===0)stats()}
+ui();meshes();stats();requestAnimationFrame(loop);
+</script></body></html>
